@@ -2,6 +2,12 @@
 
 A local Android music player for people who still believe music files are files and not tiny subscription hostages.
 
+<p align="center">
+  <img src="screenshots/player.png" width="260" alt="Player screen">
+  <img src="screenshots/library.png" width="260" alt="Songs tab">
+  <img src="screenshots/settings.png" width="260" alt="Settings screen">
+</p>
+
 SimplePlayer is a dark, minimal, local-only music player for Android 7.0 Nougat/API 24 and newer. It plays your music, reads your metadata, supports album art, handles playlists as editable text files, and does not ask you to make an account because it is not spiritually unwell.
 
 Simple does not mean primitive. That was discussed. Repeatedly.
