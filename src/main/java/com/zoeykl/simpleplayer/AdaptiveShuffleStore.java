@@ -1,3 +1,4 @@
+// Adaptive shuffle memory. Small, private, and just judgmental enough to remember your skip crimes.
 package com.zoeykl.simpleplayer;
 
 import android.content.Context;
@@ -11,6 +12,7 @@ import java.util.Map;
 public final class AdaptiveShuffleStore {
     private static final String PREFS = "adaptive_shuffle_weights";
     private static final String KEY_PREFIX = "song_";
+    // Cap the sulking. A song can be deweighted, not banished for one bad aux-cord moment.
     private static final int MAX_PENALTY = 9;
 
     private AdaptiveShuffleStore() {}
@@ -27,6 +29,7 @@ public final class AdaptiveShuffleStore {
         return out;
     }
 
+    // Fifteen-second skips are a vote. Not a legal ruling, but definitely a vote.
     public static void recordQuickSkip(Context context, Song song) {
         if (context == null || song == null) return;
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -36,6 +39,7 @@ public final class AdaptiveShuffleStore {
         prefs.edit().putInt(key, penalty).apply();
     }
 
+    // Let songs redeem themselves after a real listen. We are annoyed, not vindictive.
     public static void recordGoodPlay(Context context, Song song) {
         if (context == null || song == null) return;
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);

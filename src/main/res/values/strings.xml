@@ -1,3 +1,4 @@
 <resources>
+    <!-- One string. A monument to restraint. -->
     <string name="app_name">SimplePlayer</string>
 </resources>

@@ -1,3 +1,4 @@
+// UI code built by hand because this app has to run back to Nougat, where elegance goes to negotiate.
 package com.zoeykl.simpleplayer;
 
 import android.app.Activity;
@@ -54,6 +55,7 @@ public class MainActivity extends Activity {
     private static final String KEY_ADAPTIVE_SHUFFLE = "adaptive_shuffle";
     private static final String PERMISSION_READ_EXTERNAL_STORAGE = "android.permission.READ_EXTERNAL_STORAGE";
     private static final String PERMISSION_WRITE_EXTERNAL_STORAGE = "android.permission.WRITE_EXTERNAL_STORAGE";
+    // String literal so older compile SDKs do not burst into flames over a permission they have never met.
     private static final String PERMISSION_READ_MEDIA_AUDIO = "android.permission.READ_MEDIA_AUDIO";
 
     private static final int BG = Color.rgb(18, 19, 23);
@@ -96,6 +98,7 @@ public class MainActivity extends Activity {
     private boolean lastRenderedAdaptiveShuffle = false;
     private long lastRenderedShuffleSeed = Long.MIN_VALUE;
 
+    // Half-second UI tick: not fancy, just enough to stop the seek bar from cosplaying a screenshot.
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
             updatePlaybackUi();
@@ -217,6 +220,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    // Auto-detect only until the user chooses a folder; after that, stop "helping" like a haunted assistant.
     private void maybeAutoDetectMusicFolder() {
         if (hasPickedFolder()) return;
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
@@ -228,6 +232,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    // Cache first, scan only when asked. The Songs tab is not a background job application.
     private boolean loadLibraryCache() {
         LibraryCache.Result cached = LibraryCache.load(this);
         if (!cached.loaded) return false;
@@ -256,6 +261,7 @@ public class MainActivity extends Activity {
         loadLibrary(true);
     }
 
+    // Heavy scan runs off the UI thread because frozen scrolling is not a design language.
     private void loadLibrary(final boolean showToast) {
         if (libraryScanRunning) {
             if (showToast) toast("Library scan already running.");
@@ -290,6 +296,7 @@ public class MainActivity extends Activity {
         }, "SimplePlayer library scan").start();
     }
 
+    // Brute-force rebuilds are acceptable here because views are simple and state lives elsewhere. Mostly.
     private void render() {
         clearPlaybackViewRefs();
         root = new LinearLayout(this);
@@ -333,6 +340,7 @@ public class MainActivity extends Activity {
         header.addView(accentLine, new LinearLayout.LayoutParams(-1, dp(2)));
     }
 
+    // Bottom mini-player: just enough context to be useful without becoming a second full player stapled on.
     private void buildNowPlayingBar() {
         if (service == null || "Player".equals(currentTab)) return;
         final MusicPlaybackService.SimplePlaybackState state = service.getPlaybackState();
@@ -431,6 +439,7 @@ public class MainActivity extends Activity {
             return;
         }
 
+        // ListView is old, but lazy rows beat hand-building a thousand thumbnails like a maniac.
         ListView listView = new ListView(this);
         listView.setBackground(makeAppBackground());
         listView.setCacheColorHint(Color.TRANSPARENT);
@@ -665,6 +674,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    // Settings is where all the storage and shuffle awkwardness goes to look intentional.
     private void showSettings() {
         LinearLayout list = listContainer();
         list.addView(sectionTitle("Library folder"));
@@ -924,6 +934,7 @@ public class MainActivity extends Activity {
         return scroll;
     }
 
+    // Song rows stay lightweight; album art loading here should not become a thumbnail stampede.
     private View songRow(final Song song, View.OnClickListener listener) {
         LinearLayout box = baseRow(listener);
         box.setOrientation(LinearLayout.HORIZONTAL);
@@ -1083,6 +1094,7 @@ public class MainActivity extends Activity {
         return d;
     }
 
+    // Tiny gradient factory: minimal UI polish without dragging in a design system wearing tap shoes.
     private GradientDrawable makeGradientRect(int topColor, int bottomColor, int radius, int strokeColor, int strokeWidthDp) {
         GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{topColor, bottomColor});
         d.setCornerRadius(radius);
@@ -1154,6 +1166,7 @@ public class MainActivity extends Activity {
         return seed == 0L ? 0x5eed51a7L : seed;
     }
 
+    // Accept numbers, hex, or text. Seeds should be useful, not a math entrance exam.
     private long parseShuffleSeed(String raw) {
         String value = raw == null ? "" : raw.trim();
         if (value.length() == 0) return 0x5eed51a7L;
@@ -1183,6 +1196,7 @@ public class MainActivity extends Activity {
     }
 
 
+    // Adapter exists because the previous eager row build was a performance felony.
     private class SongAdapter extends BaseAdapter {
         @Override public int getCount() { return songs.size(); }
         @Override public Object getItem(int position) { return songs.get(position); }
@@ -1222,6 +1236,7 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+    // Long-press menu: for when tapping a song should not drag the whole library along for the ride.
     private void showSongActions(final Song song) {
         final String[] actions = new String[]{"Play this song only", "Add to playlist..."};
         new AlertDialog.Builder(this)

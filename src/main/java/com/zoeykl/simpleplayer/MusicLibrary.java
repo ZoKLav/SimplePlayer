@@ -1,3 +1,4 @@
+// Library scanning lives here because Android storage has had three midlife crises and counting.
 package com.zoeykl.simpleplayer;
 
 import android.content.ContentUris;
@@ -21,12 +22,14 @@ import java.util.Map;
 
 public class MusicLibrary {
     private static final Uri ALBUM_ART_BASE = Uri.parse("content://media/external/audio/albumart");
+    // RELATIVE_PATH is public enough to be useful and private enough to make old APIs sulk.
     private static final String COL_RELATIVE_PATH = "relative_path";
 
     public static File defaultMusicDirectory() {
         return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
     }
 
+    // Auto-detect the most plausible Music root instead of worshipping /sdcard/Music like it is 2012.
     public static String autoDetectMusicDirectory(Context context) {
         String fallback = defaultMusicDirectory().getAbsolutePath();
         HashMap<String, Integer> candidates = new HashMap<>();
@@ -71,9 +74,11 @@ public class MusicLibrary {
 
     public static List<Song> scan(Context context, String rootFolder) {
         String activeRoot = cleanRoot(rootFolder);
+        // First try the polite MediaStore path. Android likes polite right up until it pretends folders do not exist.
         ArrayList<Song> scoped = scanInternal(context, activeRoot, true);
         if (scoped.size() > 0) return sorted(scoped);
 
+        // Then try old-school filesystem walking, because WAV collections often live outside MediaStore's approval bubble.
         ArrayList<Song> direct = scanFilesystem(context, activeRoot);
         if (direct.size() > 0) return sorted(direct);
 
@@ -85,6 +90,7 @@ public class MusicLibrary {
     }
 
 
+    // SAF tree scan: the sanctioned way to ask modern Android, "may I please read the folder the user literally picked?"
     public static List<Song> scanTree(Context context, String treeUriText) {
         ArrayList<Song> out = new ArrayList<>();
         if (treeUriText == null || treeUriText.trim().length() == 0) return out;
@@ -184,6 +190,7 @@ public class MusicLibrary {
 
     private static void scanDocumentTree(Context context, Uri treeUri, String documentId,
                                          String relativePrefix, ArrayList<Song> out, int depth) {
+        // Depth/size brakes: because a bad provider or symlink-ish tree should not turn Refresh into a geological era.
         if (context == null || treeUri == null || documentId == null || depth > 24 || out.size() > 30000) return;
         Cursor cursor = null;
         try {
@@ -210,6 +217,7 @@ public class MusicLibrary {
                 DocumentChild child = new DocumentChild(childId, name, mime, childUri);
                 children.add(child);
 
+                // Folder art is a scavenger hunt: AlbumArtSmall.jpg, Folder.jpg, Cover.png, whatever ancient rite created it.
                 int artRank = sidecarArtRank(name, mime);
                 if (artRank < bestArtRank) {
                     bestArtRank = artRank;
@@ -261,6 +269,7 @@ public class MusicLibrary {
         }
     }
 
+    // Check the album folder for sidecar art before surrendering to the placeholder square of shame.
     private static String findFilesystemSidecarArt(String audioAbsolutePath) {
         try {
             if (audioAbsolutePath == null || audioAbsolutePath.trim().length() == 0) return "";
@@ -333,6 +342,7 @@ public class MusicLibrary {
         return new String[]{artist, album};
     }
 
+    // Direct filesystem fallback. Scoped storage dislikes this, but Nougat-era devices and local WAV hoards still need it.
     private static ArrayList<Song> scanFilesystem(Context context, String activeRoot) {
         ArrayList<Song> out = new ArrayList<>();
         File root = new File(activeRoot);
@@ -450,6 +460,7 @@ public class MusicLibrary {
         return name.substring(0, dot);
     }
 
+    // Ask MediaStore for rich columns first; if it throws a chair, ask again with fewer expectations.
     private static Cursor queryAudio(Context context, String selection, String sortOrder, boolean richProjection) {
         try {
             return context.getContentResolver().query(
@@ -514,6 +525,7 @@ public class MusicLibrary {
         }
     }
 
+    // Do not trust IS_MUSIC. Plenty of real songs, especially WAVs, get labeled like suspicious furniture.
     private static boolean isLikelyPlayableAudio(String path, String displayName, String mimeType, long duration) {
         String name = firstNonEmpty(displayName, path).toLowerCase(Locale.US);
         String mime = mimeType == null ? "" : mimeType.toLowerCase(Locale.US);
@@ -580,6 +592,7 @@ public class MusicLibrary {
         return null;
     }
 
+    // Root matching is best-effort because Android can redact path data and then act innocent about it.
     private static boolean matchesRootWhenPossible(String path, String relativePath, String rootFolder) {
         boolean checkedAbsolute = path != null && path.trim().length() > 0;
         if (checkedAbsolute && isInsideRoot(path, rootFolder)) return true;
@@ -628,6 +641,7 @@ public class MusicLibrary {
         return "Unknown File";
     }
 
+    // Relative paths are what make plain-text playlists portable instead of tiny absolute-path hostage notes.
     private static String deriveRelativePath(String path, String rootFolder, String fileName, String mediaRelativePath) {
         if (path != null && path.length() > 0) {
             String normalized = path.replace('\\', '/');

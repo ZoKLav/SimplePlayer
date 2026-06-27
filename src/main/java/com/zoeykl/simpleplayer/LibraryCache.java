@@ -1,3 +1,4 @@
+// Persistent library cache: the anti-'rescan the universe because a tab opened' device.
 package com.zoeykl.simpleplayer;
 
 import android.content.Context;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class LibraryCache {
+    // TSV because it is inspectable, fast enough, and not another SQLite table pretending to be destiny.
     private static final String CACHE_FILE = "library_cache.tsv";
     private static final String VERSION = "SimplePlayerLibraryCache\t2";
 
@@ -22,6 +24,7 @@ public class LibraryCache {
         public final ArrayList<Song> songs = new ArrayList<>();
     }
 
+    // Load the last scan so opening Songs does not re-interrogate every WAV like airport security.
     public static Result load(Context context) {
         Result result = new Result();
         if (context == null) return result;
@@ -70,6 +73,7 @@ public class LibraryCache {
         return result;
     }
 
+    // Write to a temp file first, because corrupting the only cache mid-save would be very on-brand and very rude.
     public static void save(Context context, String sourceKey, List<Song> songs) {
         if (context == null || songs == null) return;
         File file = new File(context.getFilesDir(), CACHE_FILE);
@@ -117,6 +121,7 @@ public class LibraryCache {
         try { new File(context.getFilesDir(), CACHE_FILE).delete(); } catch (Exception ignored) {}
     }
 
+    // Manual tab escaping: glamorous? no. predictable? yes. that is the whole job.
     private static String[] splitEscapedTabs(String line, int maxParts) {
         ArrayList<String> parts = new ArrayList<>();
         StringBuilder current = new StringBuilder();

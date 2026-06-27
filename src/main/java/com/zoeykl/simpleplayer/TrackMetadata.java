@@ -1,3 +1,4 @@
+// Metadata reader. WAV tags are a folk tradition, not a standard, so bring snacks.
 package com.zoeykl.simpleplayer;
 
 import android.content.Context;
@@ -24,12 +25,15 @@ public class TrackMetadata {
     public int trackNumber = 0;
     public String albumArtUri = "";
 
+    // Read tags from whichever doorway Android leaves unlocked today.
     public static TrackMetadata read(Context context, Uri uri, String absolutePath, String displayName) {
         TrackMetadata out = new TrackMetadata();
+        // MediaMetadataRetriever is great when it works, which is almost a product slogan.
         readAndroidMetadata(context, uri, absolutePath, displayName, out);
 
         String name = firstNonEmpty(displayName, absolutePath, uri == null ? "" : uri.toString());
         if (name.toLowerCase(Locale.US).endsWith(".wav") || name.toLowerCase(Locale.US).endsWith(".wave") || needsRiffFallback(out)) {
+            // WAV files frequently need the RIFF/INFO shovel because the normal retriever just shrugs.
             TrackMetadata riff = readRiffMetadata(context, uri, absolutePath);
             merge(out, riff, false);
         }
@@ -89,6 +93,7 @@ public class TrackMetadata {
         }
     }
 
+    // RIFF parser: tiny, defensive, and annoyed that this still matters in the year of our buffer overflow.
     private static TrackMetadata readRiffMetadata(Context context, Uri uri, String absolutePath) {
         InputStream in = null;
         try {
@@ -136,6 +141,7 @@ public class TrackMetadata {
         }
     }
 
+    // LIST/INFO chunks: where metadata goes when it wants to be technically present but emotionally unavailable.
     private static void parseListChunk(InputStream in, long size, TrackMetadata out) throws Exception {
         if (size < 4) {
             skipRemaining(in, size);
@@ -184,6 +190,7 @@ public class TrackMetadata {
         else if ("ITRK".equals(id) || "TRCK".equals(id)) out.trackNumber = out.trackNumber > 0 ? out.trackNumber : parseTrackNumber(value);
     }
 
+    // Cache embedded art as files so ImageView can consume it without us babysitting byte arrays forever.
     private static String saveEmbeddedArt(Context context, byte[] embedded, String key) {
         try {
             File dir = new File(context.getCacheDir(), "album_art");

@@ -1,11 +1,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Storage/media permissions: one app, several Android eras, none of them agreeing on terminology. -->
+
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Legacy storage flag below is not pretty, but local music players do not live on vibes alone. -->
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher_foreground"
@@ -14,6 +17,7 @@
         android:resizeableActivity="true"
         android:theme="@style/AppTheme">
 
+        <!-- Android Auto discovers us here; the actual menu tree lives in the MediaBrowserService below. -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
@@ -28,6 +32,7 @@
             </intent-filter>
         </activity>
 
+        <!-- Playback service also browses media, because Auto wants a librarian attached to the jukebox. -->
         <service
             android:name=".MusicPlaybackService"
             android:exported="true"
