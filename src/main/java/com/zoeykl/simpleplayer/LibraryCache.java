@@ -22,6 +22,7 @@ public class LibraryCache {
         public final ArrayList<Song> songs = new ArrayList<>();
     }
 
+    // Cache exists so opening Songs does not become a full storage excavation with a progress bar and regrets.
     public static Result load(Context context) {
         Result result = new Result();
         if (context == null) return result;

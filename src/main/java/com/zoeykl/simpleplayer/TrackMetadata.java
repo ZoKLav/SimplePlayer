@@ -24,6 +24,7 @@ public class TrackMetadata {
     public int trackNumber = 0;
     public String albumArtUri = "";
 
+    // Metadata first, filename last. A song called "track_07_final_FINAL.wav" deserves better, even if it started this fight.
     public static TrackMetadata read(Context context, Uri uri, String absolutePath, String displayName) {
         TrackMetadata out = new TrackMetadata();
         readAndroidMetadata(context, uri, absolutePath, displayName, out);
@@ -89,6 +90,7 @@ public class TrackMetadata {
         }
     }
 
+    // WAV metadata is less a standard and more a group project where everyone stopped replying.
     private static TrackMetadata readRiffMetadata(Context context, Uri uri, String absolutePath) {
         InputStream in = null;
         try {

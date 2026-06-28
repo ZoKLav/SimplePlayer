@@ -128,6 +128,7 @@ public class MusicPlaybackService extends MediaBrowserService {
         else if (ACTION_PREVIOUS.equals(action)) previous();
     }
 
+    // One media session to feed headsets, cars, notifications, and whichever Android surface wants to cosplay as a stereo today.
     private void setupMediaSession() {
         if (Build.VERSION.SDK_INT < 21 || mediaSession != null) return;
         mediaSession = new MediaSession(this, "SimplePlayer");

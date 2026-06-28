@@ -27,6 +27,7 @@ public final class AdaptiveShuffleStore {
         return out;
     }
 
+    // If a track gets skipped before it has even finished clearing its throat, we take the hint. Subtly.
     public static void recordQuickSkip(Context context, Song song) {
         if (context == null || song == null) return;
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);

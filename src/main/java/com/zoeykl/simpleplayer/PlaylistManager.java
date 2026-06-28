@@ -43,6 +43,7 @@ public class PlaylistManager {
         }
     }
 
+    // Plain text playlists. A shocking innovation where the user owns a file and can edit it without a ceremony.
     public static File playlistDirectory() {
         File music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
         return new File(music, "SimplePlayer/Playlists");

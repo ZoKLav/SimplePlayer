@@ -69,6 +69,7 @@ public class MusicLibrary {
         return cleanRoot(best == null ? fallback : best);
     }
 
+    // Heavy scan lives here on purpose. Do not call this from a tab switch unless you enjoy watching phones reconsider their life choices.
     public static List<Song> scan(Context context, String rootFolder) {
         String activeRoot = cleanRoot(rootFolder);
         ArrayList<Song> scoped = scanInternal(context, activeRoot, true);
@@ -85,6 +86,7 @@ public class MusicLibrary {
     }
 
 
+    // SAF tree scan: slower, fussier, and somehow still the polite way to ask modern Android for files it can clearly see.
     public static List<Song> scanTree(Context context, String treeUriText) {
         ArrayList<Song> out = new ArrayList<>();
         if (treeUriText == null || treeUriText.trim().length() == 0) return out;

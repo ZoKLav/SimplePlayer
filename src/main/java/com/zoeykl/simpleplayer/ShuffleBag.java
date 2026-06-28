@@ -16,6 +16,7 @@ public class ShuffleBag {
         return makeQueue(source, first, seed, null, false);
     }
 
+    // Deterministic chaos: same seed, same library, same order. Random-per-button-press can stay in the penalty box.
     public static ArrayList<Song> makeQueue(List<Song> source, Song first, long seed, Map<String, Integer> penalties, boolean adaptive) {
         ArrayList<Song> queue = new ArrayList<>();
         if (source == null || source.size() == 0) return queue;

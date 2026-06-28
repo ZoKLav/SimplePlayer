@@ -425,6 +425,7 @@ public class MainActivity extends Activity {
         else showPlayer();
     }
 
+    // Songs tab is display work only. If this starts scanning again, future developer: put the keyboard down and go drink water.
     private void showSongs() {
         LinearLayout outer = listContainer();
         String source = hasPickedFolder() ? "Picked folder: " + pickedFolderLabel() : "Folder: " + musicFolder;
@@ -1196,6 +1197,7 @@ public class MainActivity extends Activity {
 
 
 
+    // Sorting buttons: tiny controls, giant emotional support system for people with chaotic file libraries.
     private LinearLayout songSortControls() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.HORIZONTAL);
