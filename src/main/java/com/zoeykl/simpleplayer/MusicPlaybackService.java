@@ -1,4 +1,3 @@
-// Playback, notification, headset controls, and Android Auto all pile in here like it is the only open bar in town.
 package com.zoeykl.simpleplayer;
 
 import android.app.Notification;
@@ -48,7 +47,6 @@ public class MusicPlaybackService extends MediaBrowserService {
     private static final String KEY_SHUFFLE_SEED = "shuffle_seed";
     private static final String KEY_ADAPTIVE_SHUFFLE = "adaptive_shuffle";
 
-    // Android Auto browse IDs. Do not make these cute; head units have the imagination of a fax machine.
     private static final String AUTO_ROOT = "auto:root";
     private static final String AUTO_SONGS = "auto:songs";
     private static final String AUTO_ALBUMS = "auto:albums";
@@ -130,7 +128,6 @@ public class MusicPlaybackService extends MediaBrowserService {
         else if (ACTION_PREVIOUS.equals(action)) previous();
     }
 
-    // One MediaSession to rule headset buttons, notification controls, Bluetooth, lock screen, and Auto. Finally, a useful committee.
     private void setupMediaSession() {
         if (Build.VERSION.SDK_INT < 21 || mediaSession != null) return;
         mediaSession = new MediaSession(this, "SimplePlayer");
@@ -143,7 +140,6 @@ public class MusicPlaybackService extends MediaBrowserService {
             @Override public void onSeekTo(long pos) { seekTo((int) Math.max(0, Math.min(Integer.MAX_VALUE, pos))); }
             @Override public void onPlayFromMediaId(String mediaId, Bundle extras) { playFromAutoMediaId(mediaId); }
             @Override public void onPlayFromSearch(String query, Bundle extras) { playFirstSearchMatch(query); }
-            // Headset buttons arrive here wearing whatever costume the device vendor chose this week.
             @Override public boolean onMediaButtonEvent(Intent mediaButtonIntent) {
                 KeyEvent event = mediaButtonIntent == null ? null : (KeyEvent) mediaButtonIntent.getParcelableExtra(Intent.EXTRA_KEY_EVENT);
                 if (event == null || event.getAction() != KeyEvent.ACTION_DOWN) return super.onMediaButtonEvent(mediaButtonIntent);
@@ -187,7 +183,6 @@ public class MusicPlaybackService extends MediaBrowserService {
         if (songs != null) library.addAll(songs);
     }
 
-    // Tapping from Songs uses the full list as context. Long-press exists for the one-song hermit mode.
     public void playSong(Song song, List<Song> contextQueue) {
         if (song == null) return;
         queue.clear();
@@ -363,7 +358,6 @@ public class MusicPlaybackService extends MediaBrowserService {
         return state;
     }
 
-    // The service owns shuffle state because the UI is a weather vane, not a source of truth.
     private ArrayList<Song> makeShuffleQueue(List<Song> base, Song first) {
         return ShuffleBag.makeQueue(base, first, shuffleSeed, AdaptiveShuffleStore.penaltiesFor(this, base), adaptiveShuffleEnabled);
     }
@@ -385,7 +379,6 @@ public class MusicPlaybackService extends MediaBrowserService {
         }
     }
 
-    // MediaPlayer is simple until it is not; reset everything carefully or it expresses itself through silence.
     private void startCurrent() {
         if (queueIndex < 0 || queueIndex >= queue.size()) return;
         currentSong = queue.get(queueIndex);
@@ -468,7 +461,6 @@ public class MusicPlaybackService extends MediaBrowserService {
         }
     }
 
-    // Native media notification: less custom, more reliable, and blessed by the shade gods.
     private void showNotification() {
         if (currentSong == null) return;
         createChannelIfNeeded();
@@ -544,7 +536,6 @@ public class MusicPlaybackService extends MediaBrowserService {
         }
     }
 
-    // Keep external controls informed, because cars get grumpy when metadata goes stale.
     private void updateMediaSessionMetadata() {
         if (Build.VERSION.SDK_INT < 21 || mediaSession == null || currentSong == null) return;
         MediaMetadata.Builder builder = new MediaMetadata.Builder()
@@ -607,7 +598,6 @@ public class MusicPlaybackService extends MediaBrowserService {
         LibraryCache.save(this, sourceKey, library);
     }
 
-    // Android Auto gets a browse tree, not the phone UI. Tiny menus, big opinions.
     private List<MediaBrowser.MediaItem> autoChildrenFor(String parentId) {
         ArrayList<MediaBrowser.MediaItem> items = new ArrayList<>();
         if (parentId == null || parentId.length() == 0 || AUTO_ROOT.equals(parentId)) {

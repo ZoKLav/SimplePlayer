@@ -1,4 +1,3 @@
-// UI code built by hand because this app has to run back to Nougat, where elegance goes to negotiate.
 package com.zoeykl.simpleplayer;
 
 import android.app.Activity;
@@ -38,6 +37,7 @@ import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -53,9 +53,14 @@ public class MainActivity extends Activity {
     private static final String KEY_MUSIC_TREE_URI = "music_tree_uri";
     private static final String KEY_SHUFFLE_SEED = "shuffle_seed";
     private static final String KEY_ADAPTIVE_SHUFFLE = "adaptive_shuffle";
+    private static final String KEY_SONG_SORT = "song_sort";
+    private static final String KEY_SONG_SORT_ASC = "song_sort_asc";
+    private static final String SORT_NAME = "name";
+    private static final String SORT_DATE_ADDED = "date_added";
+    private static final String SORT_ARTIST = "artist";
+    private static final String SORT_ALBUM = "album";
     private static final String PERMISSION_READ_EXTERNAL_STORAGE = "android.permission.READ_EXTERNAL_STORAGE";
     private static final String PERMISSION_WRITE_EXTERNAL_STORAGE = "android.permission.WRITE_EXTERNAL_STORAGE";
-    // String literal so older compile SDKs do not burst into flames over a permission they have never met.
     private static final String PERMISSION_READ_MEDIA_AUDIO = "android.permission.READ_MEDIA_AUDIO";
 
     private static final int BG = Color.rgb(18, 19, 23);
@@ -78,6 +83,8 @@ public class MainActivity extends Activity {
     private String musicTreeUri = "";
     private long shuffleSeed = 0x5eed51a7L;
     private boolean adaptiveShuffle = false;
+    private String songSort = SORT_NAME;
+    private boolean songSortAscending = true;
     private String currentTab = "Songs";
     private LinearLayout root;
     private FrameLayout content;
@@ -98,7 +105,6 @@ public class MainActivity extends Activity {
     private boolean lastRenderedAdaptiveShuffle = false;
     private long lastRenderedShuffleSeed = Long.MIN_VALUE;
 
-    // Half-second UI tick: not fancy, just enough to stop the seek bar from cosplaying a screenshot.
     private final Runnable ticker = new Runnable() {
         @Override public void run() {
             updatePlaybackUi();
@@ -131,6 +137,8 @@ public class MainActivity extends Activity {
         musicTreeUri = prefs.getString(KEY_MUSIC_TREE_URI, "");
         shuffleSeed = prefs.getLong(KEY_SHUFFLE_SEED, shuffleSeed);
         adaptiveShuffle = prefs.getBoolean(KEY_ADAPTIVE_SHUFFLE, false);
+        songSort = cleanSongSort(prefs.getString(KEY_SONG_SORT, SORT_NAME));
+        songSortAscending = prefs.getBoolean(KEY_SONG_SORT_ASC, true);
         boolean cacheLoaded = loadLibraryCache();
         startService(new Intent(this, MusicPlaybackService.class));
         bindService(new Intent(this, MusicPlaybackService.class), connection, Context.BIND_AUTO_CREATE);
@@ -220,7 +228,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Auto-detect only until the user chooses a folder; after that, stop "helping" like a haunted assistant.
     private void maybeAutoDetectMusicFolder() {
         if (hasPickedFolder()) return;
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
@@ -232,7 +239,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Cache first, scan only when asked. The Songs tab is not a background job application.
     private boolean loadLibraryCache() {
         LibraryCache.Result cached = LibraryCache.load(this);
         if (!cached.loaded) return false;
@@ -261,7 +267,6 @@ public class MainActivity extends Activity {
         loadLibrary(true);
     }
 
-    // Heavy scan runs off the UI thread because frozen scrolling is not a design language.
     private void loadLibrary(final boolean showToast) {
         if (libraryScanRunning) {
             if (showToast) toast("Library scan already running.");
@@ -296,7 +301,6 @@ public class MainActivity extends Activity {
         }, "SimplePlayer library scan").start();
     }
 
-    // Brute-force rebuilds are acceptable here because views are simple and state lives elsewhere. Mostly.
     private void render() {
         clearPlaybackViewRefs();
         root = new LinearLayout(this);
@@ -340,7 +344,6 @@ public class MainActivity extends Activity {
         header.addView(accentLine, new LinearLayout.LayoutParams(-1, dp(2)));
     }
 
-    // Bottom mini-player: just enough context to be useful without becoming a second full player stapled on.
     private void buildNowPlayingBar() {
         if (service == null || "Player".equals(currentTab)) return;
         final MusicPlaybackService.SimplePlaybackState state = service.getPlaybackState();
@@ -429,6 +432,7 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams folderLp = new LinearLayout.LayoutParams(-1, -2);
         folderLp.setMargins(0, 0, 0, dp(12));
         outer.addView(folder, folderLp);
+        outer.addView(songSortControls(), new LinearLayout.LayoutParams(-1, -2));
 
         if (songs.size() == 0) {
             String message = libraryScanRunning
@@ -439,12 +443,11 @@ public class MainActivity extends Activity {
             return;
         }
 
-        // ListView is old, but lazy rows beat hand-building a thousand thumbnails like a maniac.
         ListView listView = new ListView(this);
         listView.setBackground(makeAppBackground());
         listView.setCacheColorHint(Color.TRANSPARENT);
         listView.setDivider(null);
-        listView.setAdapter(new SongAdapter());
+        listView.setAdapter(new SongAdapter(sortedSongsForDisplay()));
         outer.addView(listView, new LinearLayout.LayoutParams(-1, 0, 1));
         content.addView(outer, new FrameLayout.LayoutParams(-1, -1));
     }
@@ -674,7 +677,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Settings is where all the storage and shuffle awkwardness goes to look intentional.
     private void showSettings() {
         LinearLayout list = listContainer();
         list.addView(sectionTitle("Library folder"));
@@ -934,7 +936,6 @@ public class MainActivity extends Activity {
         return scroll;
     }
 
-    // Song rows stay lightweight; album art loading here should not become a thumbnail stampede.
     private View songRow(final Song song, View.OnClickListener listener) {
         LinearLayout box = baseRow(listener);
         box.setOrientation(LinearLayout.HORIZONTAL);
@@ -1094,7 +1095,6 @@ public class MainActivity extends Activity {
         return d;
     }
 
-    // Tiny gradient factory: minimal UI polish without dragging in a design system wearing tap shoes.
     private GradientDrawable makeGradientRect(int topColor, int bottomColor, int radius, int strokeColor, int strokeWidthDp) {
         GradientDrawable d = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[]{topColor, bottomColor});
         d.setCornerRadius(radius);
@@ -1166,7 +1166,6 @@ public class MainActivity extends Activity {
         return seed == 0L ? 0x5eed51a7L : seed;
     }
 
-    // Accept numbers, hex, or text. Seeds should be useful, not a math entrance exam.
     private long parseShuffleSeed(String raw) {
         String value = raw == null ? "" : raw.trim();
         if (value.length() == 0) return 0x5eed51a7L;
@@ -1196,17 +1195,154 @@ public class MainActivity extends Activity {
     }
 
 
-    // Adapter exists because the previous eager row build was a performance felony.
+
+    private LinearLayout songSortControls() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setPadding(0, 0, 0, dp(10));
+
+        Button sortButton = button("Sort: " + songSortLabel(songSort));
+        sortButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showSongSortDialog(); }
+        });
+        box.addView(sortButton, new LinearLayout.LayoutParams(0, dp(42), 1));
+
+        Button directionButton = button(songSortAscending ? "Ascending" : "Descending");
+        directionButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                songSortAscending = !songSortAscending;
+                saveSongSortPrefs();
+                showCurrentTab();
+            }
+        });
+        LinearLayout.LayoutParams dirLp = new LinearLayout.LayoutParams(0, dp(42), 1);
+        dirLp.setMargins(dp(8), 0, 0, 0);
+        box.addView(directionButton, dirLp);
+        return box;
+    }
+
+    private void showSongSortDialog() {
+        final String[] labels = new String[]{"Name", "Date added", "Artist", "Album"};
+        final String[] values = new String[]{SORT_NAME, SORT_DATE_ADDED, SORT_ARTIST, SORT_ALBUM};
+        int checked = 0;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i].equals(songSort)) { checked = i; break; }
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Sort songs by")
+                .setSingleChoiceItems(labels, checked, new DialogInterface.OnClickListener() {
+                    @Override public void onClick(DialogInterface dialog, int which) {
+                        songSort = values[which];
+                        saveSongSortPrefs();
+                        dialog.dismiss();
+                        showCurrentTab();
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    private ArrayList<Song> sortedSongsForDisplay() {
+        ArrayList<Song> out = new ArrayList<>(songs);
+        Collections.sort(out, songComparator());
+        return out;
+    }
+
+    private Comparator<Song> songComparator() {
+        return new Comparator<Song>() {
+            @Override public int compare(Song a, Song b) {
+                int primary;
+                if (SORT_DATE_ADDED.equals(songSort)) {
+                    primary = compareDateAdded(a.dateAddedSeconds, b.dateAddedSeconds);
+                    if (primary != 0) return primary;
+                    primary = compareText(a.title, b.title);
+                    if (primary == 0) primary = compareText(a.artist, b.artist);
+                    if (primary == 0) primary = compareText(a.album, b.album);
+                } else if (SORT_ARTIST.equals(songSort)) {
+                    primary = compareText(a.artist, b.artist);
+                    if (primary == 0) primary = compareText(a.album, b.album);
+                    if (primary == 0) primary = compareTrack(a.trackNumber, b.trackNumber);
+                    if (primary == 0) primary = compareText(a.title, b.title);
+                } else if (SORT_ALBUM.equals(songSort)) {
+                    primary = compareText(a.album, b.album);
+                    if (primary == 0) primary = compareTrack(a.trackNumber, b.trackNumber);
+                    if (primary == 0) primary = compareText(a.title, b.title);
+                    if (primary == 0) primary = compareText(a.artist, b.artist);
+                } else {
+                    primary = compareText(a.title, b.title);
+                    if (primary == 0) primary = compareText(a.artist, b.artist);
+                    if (primary == 0) primary = compareText(a.album, b.album);
+                }
+
+                if (!songSortAscending) primary = -primary;
+                if (primary != 0) return primary;
+                int stable = compareText(a.fileName, b.fileName);
+                if (stable != 0) return stable;
+                return compareText(a.stableKey(), b.stableKey());
+            }
+        };
+    }
+
+    private int compareText(String a, String b) {
+        String aa = a == null ? "" : a;
+        String bb = b == null ? "" : b;
+        return aa.compareToIgnoreCase(bb);
+    }
+
+    private int compareDateAdded(long a, long b) {
+        boolean ak = a > 0L;
+        boolean bk = b > 0L;
+        if (!ak && !bk) return 0;
+        if (!ak) return 1;
+        if (!bk) return -1;
+        if (a == b) return 0;
+        int value = a < b ? -1 : 1;
+        return songSortAscending ? value : -value;
+    }
+
+    private int compareTrack(int a, int b) {
+        int aa = a <= 0 ? Integer.MAX_VALUE : a;
+        int bb = b <= 0 ? Integer.MAX_VALUE : b;
+        if (aa == bb) return 0;
+        return aa < bb ? -1 : 1;
+    }
+
+    private String cleanSongSort(String value) {
+        if (SORT_DATE_ADDED.equals(value) || SORT_ARTIST.equals(value) || SORT_ALBUM.equals(value)) return value;
+        return SORT_NAME;
+    }
+
+    private String songSortLabel(String value) {
+        if (SORT_DATE_ADDED.equals(value)) return "Date added";
+        if (SORT_ARTIST.equals(value)) return "Artist";
+        if (SORT_ALBUM.equals(value)) return "Album";
+        return "Name";
+    }
+
+    private void saveSongSortPrefs() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                .putString(KEY_SONG_SORT, songSort)
+                .putBoolean(KEY_SONG_SORT_ASC, songSortAscending)
+                .apply();
+    }
+
     private class SongAdapter extends BaseAdapter {
-        @Override public int getCount() { return songs.size(); }
-        @Override public Object getItem(int position) { return songs.get(position); }
+        private final ArrayList<Song> displaySongs;
+
+        SongAdapter(ArrayList<Song> displaySongs) {
+            this.displaySongs = displaySongs == null ? new ArrayList<Song>() : displaySongs;
+        }
+
+        @Override public int getCount() { return displaySongs.size(); }
+        @Override public Object getItem(int position) { return displaySongs.get(position); }
         @Override public long getItemId(int position) { return position; }
 
         @Override public View getView(final int position, View convertView, ViewGroup parent) {
-            final Song song = songs.get(position);
+            final Song song = displaySongs.get(position);
             View row = songRow(song, new View.OnClickListener() {
                 @Override public void onClick(View v) {
-                    if (service != null) service.setQueueAndPlay(songs, position);
+                    if (service != null) service.setQueueAndPlay(displaySongs, position);
                     currentTab = "Player";
                     render();
                 }
@@ -1236,7 +1372,6 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    // Long-press menu: for when tapping a song should not drag the whole library along for the ride.
     private void showSongActions(final Song song) {
         final String[] actions = new String[]{"Play this song only", "Add to playlist..."};
         new AlertDialog.Builder(this)

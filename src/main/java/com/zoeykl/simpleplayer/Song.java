@@ -1,4 +1,3 @@
-// Tiny immutable-ish track record. If this grows setters, somebody has lost the plot.
 package com.zoeykl.simpleplayer;
 
 import java.util.Locale;
@@ -18,18 +17,27 @@ public class Song {
     public final int trackNumber;
     public final String genre;
     public final String year;
+    public final long dateAddedSeconds;
 
     public Song(long id, String title, String artist, String album, long durationMs,
                 String contentUri, String albumArtUri, String displayName,
                 String fileName, String absolutePath, String relativePath) {
         this(id, title, artist, album, durationMs, contentUri, albumArtUri, displayName,
-                fileName, absolutePath, relativePath, 0, "", "");
+                fileName, absolutePath, relativePath, 0, "", "", 0L);
     }
 
     public Song(long id, String title, String artist, String album, long durationMs,
                 String contentUri, String albumArtUri, String displayName,
                 String fileName, String absolutePath, String relativePath,
                 int trackNumber, String genre, String year) {
+        this(id, title, artist, album, durationMs, contentUri, albumArtUri, displayName,
+                fileName, absolutePath, relativePath, trackNumber, genre, year, 0L);
+    }
+
+    public Song(long id, String title, String artist, String album, long durationMs,
+                String contentUri, String albumArtUri, String displayName,
+                String fileName, String absolutePath, String relativePath,
+                int trackNumber, String genre, String year, long dateAddedSeconds) {
         this.id = id;
         this.title = clean(title, "Unknown Title");
         this.artist = clean(artist, "Unknown Artist");
@@ -44,6 +52,7 @@ public class Song {
         this.trackNumber = Math.max(0, trackNumber);
         this.genre = cleanOptional(genre);
         this.year = cleanOptional(year);
+        this.dateAddedSeconds = Math.max(0L, dateAddedSeconds);
     }
 
     private static String clean(String value, String fallback) {
@@ -60,7 +69,6 @@ public class Song {
         return trimmed;
     }
 
-    // Stable identity for caches/shuffle/playlists. Metadata lies; paths usually lie less. Usually.
     public String stableKey() {
         if (absolutePath.length() > 0) return absolutePath.toLowerCase(Locale.US);
         if (contentUri.length() > 0) return contentUri.toLowerCase(Locale.US);
@@ -71,7 +79,6 @@ public class Song {
         return other != null && stableKey().equals(other.stableKey());
     }
 
-    // Prefer relative paths so playlist files can survive folder moves without developing abandonment issues.
     public String playlistLine() {
         if (relativePath != null && relativePath.length() > 0) return relativePath;
         return fileName;

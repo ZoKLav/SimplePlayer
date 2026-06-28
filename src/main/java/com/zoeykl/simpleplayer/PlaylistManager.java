@@ -1,4 +1,3 @@
-// Plain-text playlists: intentionally boring, intentionally editable, gloriously not a database migration.
 package com.zoeykl.simpleplayer;
 
 import android.os.Environment;
@@ -44,7 +43,6 @@ public class PlaylistManager {
         }
     }
 
-    // Public folder on purpose. Users editing playlists in a file manager is a feature, not a security incident.
     public static File playlistDirectory() {
         File music = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
         return new File(music, "SimplePlayer/Playlists");
@@ -75,7 +73,6 @@ public class PlaylistManager {
         return out;
     }
 
-    // Resolve forgivingly: filenames for humans, relative paths for when humans have two songs named Intro.wav.
     public static PlaylistLoadResult load(File file, List<Song> library) {
         PlaylistLoadResult result = new PlaylistLoadResult();
         Map<String, ArrayList<Song>> index = buildIndex(library);
@@ -158,7 +155,6 @@ public class PlaylistManager {
         writer.write("# Edit freely. One filename or relative path per line.\n");
     }
 
-    // Windows-forbidden characters are invited to leave before they ruin everybody's day.
     private static String sanitizePlaylistName(String name) {
         if (name == null || name.trim().length() == 0) return "New Playlist";
         return name.trim().replaceAll("[\\\\/:*?\"<>|]", "_");
@@ -202,7 +198,6 @@ public class PlaylistManager {
         bucket.add(song);
     }
 
-    // Last-chance resolver, because hand-edited playlists deserve forgiveness, not a stack trace.
     private static Song resolve(String line, Map<String, ArrayList<Song>> index, List<Song> library) {
         String normalized = normalize(line);
         ArrayList<Song> exact = index.get(normalized);

@@ -1,5 +1,4 @@
 <resources>
-    <!-- Kept minimal because runtime accent colors do most of the actual work. -->
     <color name="background_dark">#121212</color>
     <color name="accent_default">#E53935</color>
 </resources>

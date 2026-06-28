@@ -1,4 +1,3 @@
-// Shuffle logic: because 'Random.nextInt() every track' is how players become repeat goblins.
 package com.zoeykl.simpleplayer;
 
 import java.util.ArrayList;
@@ -17,7 +16,6 @@ public class ShuffleBag {
         return makeQueue(source, first, seed, null, false);
     }
 
-    // Build the whole bag up front so shuffle means "surprising order," not "same song again, clown rules."
     public static ArrayList<Song> makeQueue(List<Song> source, Song first, long seed, Map<String, Integer> penalties, boolean adaptive) {
         ArrayList<Song> queue = new ArrayList<>();
         if (source == null || source.size() == 0) return queue;
@@ -34,7 +32,6 @@ public class ShuffleBag {
         return queue;
     }
 
-    // Stable seed sort: same seed + same library = same order, because reproducible chaos is the good chaos.
     private static void seededSongSort(ArrayList<Song> list, final long seed, final Map<String, Integer> penalties, final boolean adaptive) {
         Collections.sort(list, new Comparator<Song>() {
             @Override public int compare(Song a, Song b) {
@@ -53,7 +50,6 @@ public class ShuffleBag {
         });
     }
 
-    // Adaptive mode nudges skipped songs later; it does not exile them to the moon. Restraint, allegedly.
     private static double adaptiveRank(Song song, long seed, Map<String, Integer> penalties) {
         long base = songScore(song, seed);
         int penalty = 0;
@@ -70,7 +66,6 @@ public class ShuffleBag {
         return (double) (value >>> 11) / (double) (1L << 53);
     }
 
-    // De-clump artists/albums so shuffle does not accidentally become "three tracks by the same goblin."
     private static void declump(ArrayList<Song> list, long seed) {
         for (int i = 1; i < list.size(); i++) {
             if (!tooSimilarToRecent(list, i)) continue;
@@ -138,7 +133,6 @@ public class ShuffleBag {
         return h;
     }
 
-    // SplitMix-style avalanche: tiny hash blender, because modulo random ordering is where dignity dies.
     private static long mix64(long z) {
         z = (z ^ (z >>> 30)) * 0xbf58476d1ce4e5b9L;
         z = (z ^ (z >>> 27)) * 0x94d049bb133111ebL;

@@ -1,5 +1,4 @@
 <resources>
-    <!-- NoActionBar because the custom header looks better than Android's beige office furniture. -->
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>

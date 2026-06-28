@@ -1,4 +1,3 @@
-// Library scanning lives here because Android storage has had three midlife crises and counting.
 package com.zoeykl.simpleplayer;
 
 import android.content.ContentUris;
@@ -22,14 +21,12 @@ import java.util.Map;
 
 public class MusicLibrary {
     private static final Uri ALBUM_ART_BASE = Uri.parse("content://media/external/audio/albumart");
-    // RELATIVE_PATH is public enough to be useful and private enough to make old APIs sulk.
     private static final String COL_RELATIVE_PATH = "relative_path";
 
     public static File defaultMusicDirectory() {
         return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC);
     }
 
-    // Auto-detect the most plausible Music root instead of worshipping /sdcard/Music like it is 2012.
     public static String autoDetectMusicDirectory(Context context) {
         String fallback = defaultMusicDirectory().getAbsolutePath();
         HashMap<String, Integer> candidates = new HashMap<>();
@@ -74,11 +71,9 @@ public class MusicLibrary {
 
     public static List<Song> scan(Context context, String rootFolder) {
         String activeRoot = cleanRoot(rootFolder);
-        // First try the polite MediaStore path. Android likes polite right up until it pretends folders do not exist.
         ArrayList<Song> scoped = scanInternal(context, activeRoot, true);
         if (scoped.size() > 0) return sorted(scoped);
 
-        // Then try old-school filesystem walking, because WAV collections often live outside MediaStore's approval bubble.
         ArrayList<Song> direct = scanFilesystem(context, activeRoot);
         if (direct.size() > 0) return sorted(direct);
 
@@ -90,7 +85,6 @@ public class MusicLibrary {
     }
 
 
-    // SAF tree scan: the sanctioned way to ask modern Android, "may I please read the folder the user literally picked?"
     public static List<Song> scanTree(Context context, String treeUriText) {
         ArrayList<Song> out = new ArrayList<>();
         if (treeUriText == null || treeUriText.trim().length() == 0) return out;
@@ -157,6 +151,7 @@ public class MusicLibrary {
                 String relativePath = getString(cursor, COL_RELATIVE_PATH);
                 long albumId = getLong(cursor, MediaStore.Audio.Media.ALBUM_ID);
                 long mediaStoreTrack = getLong(cursor, MediaStore.Audio.Media.TRACK);
+                long dateAddedSeconds = getLong(cursor, MediaStore.Audio.Media.DATE_ADDED);
 
                 if (!isLikelyPlayableAudio(path, displayName, mimeType, duration)) continue;
                 if (enforceRoot && !matchesRootWhenPossible(path, relativePath, activeRoot)) continue;
@@ -177,7 +172,7 @@ public class MusicLibrary {
                 int finalTrack = metadata.trackNumber > 0 ? metadata.trackNumber : normalizeTrackNumber(mediaStoreTrack);
                 songs.add(new Song(id, finalTitle, finalArtist, finalAlbum, finalDuration,
                         contentUri.toString(), finalArt, displayName,
-                        fileName, absolutePath, relative, finalTrack, metadata.genre, metadata.year));
+                        fileName, absolutePath, relative, finalTrack, metadata.genre, metadata.year, dateAddedSeconds));
             }
         } catch (Exception ignored) {
             // Keep the UI alive even if a specific device/provider behaves weirdly.
@@ -190,7 +185,6 @@ public class MusicLibrary {
 
     private static void scanDocumentTree(Context context, Uri treeUri, String documentId,
                                          String relativePrefix, ArrayList<Song> out, int depth) {
-        // Depth/size brakes: because a bad provider or symlink-ish tree should not turn Refresh into a geological era.
         if (context == null || treeUri == null || documentId == null || depth > 24 || out.size() > 30000) return;
         Cursor cursor = null;
         try {
@@ -200,7 +194,8 @@ public class MusicLibrary {
                             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
                             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                             DocumentsContract.Document.COLUMN_MIME_TYPE,
-                            DocumentsContract.Document.COLUMN_SIZE
+                            DocumentsContract.Document.COLUMN_SIZE,
+                            DocumentsContract.Document.COLUMN_LAST_MODIFIED
                     }, null, null, null);
             if (cursor == null) return;
 
@@ -211,13 +206,13 @@ public class MusicLibrary {
                 String childId = getString(cursor, DocumentsContract.Document.COLUMN_DOCUMENT_ID);
                 String name = getString(cursor, DocumentsContract.Document.COLUMN_DISPLAY_NAME);
                 String mime = getString(cursor, DocumentsContract.Document.COLUMN_MIME_TYPE);
+                long lastModifiedMs = getLong(cursor, DocumentsContract.Document.COLUMN_LAST_MODIFIED);
                 if (childId.length() == 0 || name.length() == 0) continue;
 
                 Uri childUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, childId);
-                DocumentChild child = new DocumentChild(childId, name, mime, childUri);
+                DocumentChild child = new DocumentChild(childId, name, mime, childUri, lastModifiedMs);
                 children.add(child);
 
-                // Folder art is a scavenger hunt: AlbumArtSmall.jpg, Folder.jpg, Cover.png, whatever ancient rite created it.
                 int artRank = sidecarArtRank(name, mime);
                 if (artRank < bestArtRank) {
                     bestArtRank = artRank;
@@ -246,7 +241,7 @@ public class MusicLibrary {
                 String finalArt = prefer(metadata.albumArtUri, folderArtUri);
                 out.add(new Song(-1000000L - out.size(), finalTitle, finalArtist, finalAlbum, metadata.durationMs,
                         child.uri.toString(), finalArt, child.name, child.name, "", relative,
-                        metadata.trackNumber, metadata.genre, metadata.year));
+                        metadata.trackNumber, metadata.genre, metadata.year, child.lastModifiedMs > 0 ? child.lastModifiedMs / 1000L : 0L));
             }
         } catch (Exception ignored) {
             // Some providers restrict folders mid-tree. Skip the bad branch and keep scanning.
@@ -260,16 +255,17 @@ public class MusicLibrary {
         final String name;
         final String mime;
         final Uri uri;
+        final long lastModifiedMs;
 
-        DocumentChild(String id, String name, String mime, Uri uri) {
+        DocumentChild(String id, String name, String mime, Uri uri, long lastModifiedMs) {
             this.id = id == null ? "" : id;
             this.name = name == null ? "" : name;
             this.mime = mime == null ? "" : mime;
             this.uri = uri;
+            this.lastModifiedMs = Math.max(0L, lastModifiedMs);
         }
     }
 
-    // Check the album folder for sidecar art before surrendering to the placeholder square of shame.
     private static String findFilesystemSidecarArt(String audioAbsolutePath) {
         try {
             if (audioAbsolutePath == null || audioAbsolutePath.trim().length() == 0) return "";
@@ -342,7 +338,6 @@ public class MusicLibrary {
         return new String[]{artist, album};
     }
 
-    // Direct filesystem fallback. Scoped storage dislikes this, but Nougat-era devices and local WAV hoards still need it.
     private static ArrayList<Song> scanFilesystem(Context context, String activeRoot) {
         ArrayList<Song> out = new ArrayList<>();
         File root = new File(activeRoot);
@@ -377,7 +372,7 @@ public class MusicLibrary {
                 String finalArt = prefer(metadata.albumArtUri, folderArt);
                 out.add(new Song(-1L - out.size(), finalTitle, finalArtist, finalAlbum, metadata.durationMs,
                         fileUri.toString(), finalArt, name, name, absolute, relative,
-                        metadata.trackNumber, metadata.genre, metadata.year));
+                        metadata.trackNumber, metadata.genre, metadata.year, file.lastModified() > 0 ? file.lastModified() / 1000L : 0L));
                 return;
             }
 
@@ -460,7 +455,6 @@ public class MusicLibrary {
         return name.substring(0, dot);
     }
 
-    // Ask MediaStore for rich columns first; if it throws a chair, ask again with fewer expectations.
     private static Cursor queryAudio(Context context, String selection, String sortOrder, boolean richProjection) {
         try {
             return context.getContentResolver().query(
@@ -497,6 +491,7 @@ public class MusicLibrary {
         cols.add(MediaStore.Audio.Media.ALBUM_ID);
         cols.add(MediaStore.Audio.Media.TRACK);
         cols.add(MediaStore.Audio.Media.MIME_TYPE);
+        cols.add(MediaStore.Audio.Media.DATE_ADDED);
         if (rich) {
             cols.add(MediaStore.Audio.Media.DATA);
             if (Build.VERSION.SDK_INT >= 29) cols.add(COL_RELATIVE_PATH);
@@ -525,7 +520,6 @@ public class MusicLibrary {
         }
     }
 
-    // Do not trust IS_MUSIC. Plenty of real songs, especially WAVs, get labeled like suspicious furniture.
     private static boolean isLikelyPlayableAudio(String path, String displayName, String mimeType, long duration) {
         String name = firstNonEmpty(displayName, path).toLowerCase(Locale.US);
         String mime = mimeType == null ? "" : mimeType.toLowerCase(Locale.US);
@@ -592,7 +586,6 @@ public class MusicLibrary {
         return null;
     }
 
-    // Root matching is best-effort because Android can redact path data and then act innocent about it.
     private static boolean matchesRootWhenPossible(String path, String relativePath, String rootFolder) {
         boolean checkedAbsolute = path != null && path.trim().length() > 0;
         if (checkedAbsolute && isInsideRoot(path, rootFolder)) return true;
@@ -641,7 +634,6 @@ public class MusicLibrary {
         return "Unknown File";
     }
 
-    // Relative paths are what make plain-text playlists portable instead of tiny absolute-path hostage notes.
     private static String deriveRelativePath(String path, String rootFolder, String fileName, String mediaRelativePath) {
         if (path != null && path.length() > 0) {
             String normalized = path.replace('\\', '/');
