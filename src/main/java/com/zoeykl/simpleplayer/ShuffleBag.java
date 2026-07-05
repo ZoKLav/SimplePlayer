@@ -3,6 +3,7 @@ package com.zoeykl.simpleplayer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -21,8 +22,12 @@ public class ShuffleBag {
         ArrayList<Song> queue = new ArrayList<>();
         if (source == null || source.size() == 0) return queue;
 
+        HashSet<String> seen = new HashSet<>();
         for (Song song : source) {
+            if (song == null) continue;
             if (first != null && song.sameFileAs(first)) continue;
+            String key = song.stableKey();
+            if (!seen.add(key)) continue;
             queue.add(song);
         }
 

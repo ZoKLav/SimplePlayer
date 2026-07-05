@@ -9,30 +9,35 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
-import android.media.MediaDescription;
-import android.media.browse.MediaBrowser;
 import android.media.AudioManager;
-import android.media.MediaMetadata;
 import android.media.MediaPlayer;
-import android.media.session.MediaSession;
-import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.Build;
 import android.os.IBinder;
 import android.view.KeyEvent;
-import android.service.media.MediaBrowserService;
+
+import androidx.core.app.NotificationCompat;
+import androidx.media.MediaBrowserServiceCompat;
+import androidx.media.session.MediaButtonReceiver;
+
+import android.support.v4.media.MediaBrowserCompat;
+import android.support.v4.media.MediaDescriptionCompat;
+import android.support.v4.media.MediaMetadataCompat;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
 
 import java.io.InputStream;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
-public class MusicPlaybackService extends MediaBrowserService {
+public class MusicPlaybackService extends MediaBrowserServiceCompat {
     private static final int NOTIFICATION_ID = 2701;
     private static final String CHANNEL_ID = "playback";
     private static final String ACTION_TOGGLE = "com.zoeykl.simpleplayer.TOGGLE";
@@ -57,6 +62,11 @@ public class MusicPlaybackService extends MediaBrowserService {
     private static final String AUTO_PLAYLIST_PREFIX = "auto:playlist:";
     private static final String AUTO_SONG_PREFIX = "auto:song:";
 
+    private static final String AUTO_CONTENT_STYLE_BROWSABLE = "android.media.browse.CONTENT_STYLE_BROWSABLE_HINT";
+    private static final String AUTO_CONTENT_STYLE_PLAYABLE = "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT";
+    private static final int AUTO_CONTENT_STYLE_LIST = 1;
+    private static final int AUTO_CONTENT_STYLE_GRID = 2;
+
     public class LocalBinder extends Binder {
         public MusicPlaybackService getService() {
             return MusicPlaybackService.this;
@@ -79,8 +89,13 @@ public class MusicPlaybackService extends MediaBrowserService {
     private final ArrayList<Song> library = new ArrayList<>();
     private final ArrayList<Song> queue = new ArrayList<>();
     private final ArrayList<Song> queueBase = new ArrayList<>();
+    private final HashSet<String> shufflePlayedThisCycle = new HashSet<>();
+    private final HashSet<String> shuffleFailedThisCycle = new HashSet<>();
+    private String lastShuffleBaseSignature = "";
+    private long lastShuffleSeed = Long.MIN_VALUE;
+    private boolean lastShuffleAdaptive = false;
     private MediaPlayer player;
-    private MediaSession mediaSession;
+    private MediaSessionCompat mediaSession;
     private Song currentSong;
     private int queueIndex = -1;
     private boolean shuffleEnabled = false;
@@ -89,6 +104,7 @@ public class MusicPlaybackService extends MediaBrowserService {
     private boolean preparing = false;
     private boolean sessionTokenSet = false;
     private int accent = 0xFFE53935;
+    private int consecutivePlaybackFailures = 0;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -97,7 +113,7 @@ public class MusicPlaybackService extends MediaBrowserService {
     }
 
     @Override public IBinder onBind(Intent intent) {
-        if (intent != null && MediaBrowserService.SERVICE_INTERFACE.equals(intent.getAction())) {
+        if (intent != null && MediaBrowserServiceCompat.SERVICE_INTERFACE.equals(intent.getAction())) {
             return super.onBind(intent);
         }
         return binder;
@@ -105,16 +121,21 @@ public class MusicPlaybackService extends MediaBrowserService {
 
     @Override public BrowserRoot onGetRoot(String clientPackageName, int clientUid, Bundle rootHints) {
         ensureAutoLibraryLoaded();
-        return new BrowserRoot(AUTO_ROOT, null);
+        Bundle extras = new Bundle();
+        extras.putInt(AUTO_CONTENT_STYLE_BROWSABLE, AUTO_CONTENT_STYLE_GRID);
+        extras.putInt(AUTO_CONTENT_STYLE_PLAYABLE, AUTO_CONTENT_STYLE_LIST);
+        return new BrowserRoot(AUTO_ROOT, extras);
     }
 
-    @Override public void onLoadChildren(String parentId, Result<List<MediaBrowser.MediaItem>> result) {
+    @Override public void onLoadChildren(String parentId, Result<List<MediaBrowserCompat.MediaItem>> result) {
         ensureAutoLibraryLoaded();
         result.sendResult(autoChildrenFor(parentId));
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && intent.getAction() != null) {
+        if (intent != null && Intent.ACTION_MEDIA_BUTTON.equals(intent.getAction()) && mediaSession != null) {
+            MediaButtonReceiver.handleIntent(mediaSession, intent);
+        } else if (intent != null && intent.getAction() != null) {
             handleAction(intent.getAction());
         }
         return START_STICKY;
@@ -130,10 +151,10 @@ public class MusicPlaybackService extends MediaBrowserService {
 
     // One media session to feed headsets, cars, notifications, and whichever Android surface wants to cosplay as a stereo today.
     private void setupMediaSession() {
-        if (Build.VERSION.SDK_INT < 21 || mediaSession != null) return;
-        mediaSession = new MediaSession(this, "SimplePlayer");
-        mediaSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
-        mediaSession.setCallback(new MediaSession.Callback() {
+        if (mediaSession != null) return;
+        mediaSession = new MediaSessionCompat(this, "SimplePlayer");
+        mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        mediaSession.setCallback(new MediaSessionCompat.Callback() {
             @Override public void onPlay() { play(); }
             @Override public void onPause() { pause(); }
             @Override public void onSkipToNext() { next(); }
@@ -190,9 +211,11 @@ public class MusicPlaybackService extends MediaBrowserService {
         List<Song> base = contextQueue == null || contextQueue.size() == 0 ? library : contextQueue;
         queueBase.clear();
         queueBase.addAll(base);
+        resetShuffleCycle();
         if (shuffleEnabled) {
-            queue.addAll(makeShuffleQueue(base, song));
+            queue.addAll(makeShuffleQueue(base, song, false));
             queueIndex = 0;
+            rememberShuffleGeneration(base);
         } else {
             queue.addAll(base);
             queueIndex = indexOf(queue, song);
@@ -247,14 +270,21 @@ public class MusicPlaybackService extends MediaBrowserService {
         if (queue.size() == 0) return;
         if (userInitiated) maybeRecordQuickSkip();
         else maybeRecordGoodPlay();
+        if (consecutivePlaybackFailures > Math.max(12, queue.size() + 2)) {
+            preparing = false;
+            updateMediaSessionState();
+            updateNotificationOnly();
+            return;
+        }
         if (queueIndex < queue.size() - 1) {
             queueIndex++;
         } else if (shuffleEnabled) {
             Song old = currentSong;
             ArrayList<Song> base = queueBase.size() > 0 ? new ArrayList<>(queueBase) : (library.size() > 0 ? new ArrayList<>(library) : new ArrayList<>(queue));
             queue.clear();
-            queue.addAll(makeShuffleQueue(base, old));
+            queue.addAll(makeShuffleQueue(base, old, true));
             queueIndex = queue.size() > 1 ? 1 : 0;
+            rememberShuffleGeneration(base);
         } else {
             queueIndex = 0;
         }
@@ -286,9 +316,11 @@ public class MusicPlaybackService extends MediaBrowserService {
         if (currentSong != null) {
             ArrayList<Song> base = queueBase.size() > 0 ? new ArrayList<>(queueBase) : (queue.size() > 0 ? new ArrayList<>(queue) : new ArrayList<>(library));
             queue.clear();
+            resetShuffleCycle();
             if (enabled) {
-                queue.addAll(makeShuffleQueue(base, currentSong));
+                queue.addAll(makeShuffleQueue(base, currentSong, false));
                 queueIndex = 0;
+                rememberShuffleGeneration(base);
             } else {
                 queue.addAll(base);
                 queueIndex = indexOf(queue, currentSong);
@@ -304,8 +336,10 @@ public class MusicPlaybackService extends MediaBrowserService {
 
     public void setShuffleSeed(long seed) {
         if (seed == 0L) seed = 0x5eed51a7L;
+        if (shuffleSeed == seed) return;
         shuffleSeed = seed;
-        rebuildShuffleQueueAroundCurrentSong();
+        resetShuffleCycle();
+        rebuildShuffleQueueAroundCurrentSong(true);
     }
 
     public long getShuffleSeed() {
@@ -315,7 +349,8 @@ public class MusicPlaybackService extends MediaBrowserService {
     public void setAdaptiveShuffleEnabled(boolean enabled) {
         if (adaptiveShuffleEnabled == enabled) return;
         adaptiveShuffleEnabled = enabled;
-        rebuildShuffleQueueAroundCurrentSong();
+        resetShuffleCycle();
+        rebuildShuffleQueueAroundCurrentSong(true);
     }
 
     public boolean isAdaptiveShuffleEnabled() {
@@ -324,15 +359,22 @@ public class MusicPlaybackService extends MediaBrowserService {
 
     public void resetAdaptiveShuffleWeights() {
         AdaptiveShuffleStore.reset(this);
-        rebuildShuffleQueueAroundCurrentSong();
+        resetShuffleCycle();
+        rebuildShuffleQueueAroundCurrentSong(true);
     }
 
     public void rebuildShuffleQueueAroundCurrentSong() {
+        rebuildShuffleQueueAroundCurrentSong(false);
+    }
+
+    private void rebuildShuffleQueueAroundCurrentSong(boolean force) {
         if (!shuffleEnabled || currentSong == null) return;
         ArrayList<Song> base = queueBase.size() > 0 ? new ArrayList<>(queueBase) : (library.size() > 0 ? new ArrayList<>(library) : new ArrayList<>(queue));
+        if (!force && sameShuffleGeneration(base)) return;
         queue.clear();
-        queue.addAll(makeShuffleQueue(base, currentSong));
+        queue.addAll(makeShuffleQueue(base, currentSong, !force));
         queueIndex = queue.size() == 0 ? -1 : 0;
+        rememberShuffleGeneration(base);
         updateMediaSessionState();
         updateNotificationOnly();
     }
@@ -360,7 +402,78 @@ public class MusicPlaybackService extends MediaBrowserService {
     }
 
     private ArrayList<Song> makeShuffleQueue(List<Song> base, Song first) {
-        return ShuffleBag.makeQueue(base, first, shuffleSeed, AdaptiveShuffleStore.penaltiesFor(this, base), adaptiveShuffleEnabled);
+        return makeShuffleQueue(base, first, true);
+    }
+
+    private ArrayList<Song> makeShuffleQueue(List<Song> base, Song first, boolean respectCycleHistory) {
+        ArrayList<Song> usable = new ArrayList<>();
+        if (base != null) {
+            for (Song song : base) {
+                if (song == null) continue;
+                if (respectCycleHistory && isSuppressedForCurrentShuffleCycle(song, first)) continue;
+                usable.add(song);
+            }
+        }
+
+        // If history filtering leaves us with crumbs, start a new bag. Shuffle should feel like a deck, not a snack-sized loop.
+        if (usable.size() == 0 || (base != null && base.size() > 12 && usable.size() < Math.max(4, base.size() / 10))) {
+            resetShuffleCycle();
+            if (base != null) usable.addAll(base);
+        }
+
+        return ShuffleBag.makeQueue(usable, first, shuffleSeed, AdaptiveShuffleStore.penaltiesFor(this, usable), adaptiveShuffleEnabled);
+    }
+
+    private boolean isSuppressedForCurrentShuffleCycle(Song song, Song first) {
+        if (song == null) return true;
+        if (first != null && song.sameFileAs(first)) return false;
+        String key = song.stableKey();
+        return shufflePlayedThisCycle.contains(key) || shuffleFailedThisCycle.contains(key);
+    }
+
+    private void resetShuffleCycle() {
+        shufflePlayedThisCycle.clear();
+        shuffleFailedThisCycle.clear();
+        lastShuffleBaseSignature = "";
+        lastShuffleSeed = Long.MIN_VALUE;
+    }
+
+    private void rememberShufflePlayStarted(Song song) {
+        if (!shuffleEnabled || song == null) return;
+        shufflePlayedThisCycle.add(song.stableKey());
+    }
+
+    private void rememberPlaybackFailure(Song song) {
+        consecutivePlaybackFailures++;
+        if (!shuffleEnabled || song == null) return;
+        shuffleFailedThisCycle.add(song.stableKey());
+    }
+
+    private void rememberShuffleGeneration(List<Song> base) {
+        lastShuffleBaseSignature = shuffleBaseSignature(base);
+        lastShuffleSeed = shuffleSeed;
+        lastShuffleAdaptive = adaptiveShuffleEnabled;
+    }
+
+    private boolean sameShuffleGeneration(List<Song> base) {
+        return lastShuffleSeed == shuffleSeed
+                && lastShuffleAdaptive == adaptiveShuffleEnabled
+                && lastShuffleBaseSignature.equals(shuffleBaseSignature(base));
+    }
+
+    private String shuffleBaseSignature(List<Song> base) {
+        if (base == null || base.size() == 0) return "empty";
+        long hash = 0xcbf29ce484222325L;
+        for (Song song : base) {
+            String key = song == null ? "" : song.stableKey();
+            for (int i = 0; i < key.length(); i++) {
+                hash ^= key.charAt(i);
+                hash *= 0x100000001b3L;
+            }
+            hash ^= 0xff;
+            hash *= 0x100000001b3L;
+        }
+        return base.size() + ":" + hash;
     }
 
     private void maybeRecordQuickSkip() {
@@ -383,6 +496,7 @@ public class MusicPlaybackService extends MediaBrowserService {
     private void startCurrent() {
         if (queueIndex < 0 || queueIndex >= queue.size()) return;
         currentSong = queue.get(queueIndex);
+        rememberShufflePlayStarted(currentSong);
         releasePlayer();
         preparing = true;
         updateMediaSessionMetadata();
@@ -406,6 +520,7 @@ public class MusicPlaybackService extends MediaBrowserService {
             player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 @Override public void onPrepared(MediaPlayer mp) {
                     preparing = false;
+                    consecutivePlaybackFailures = 0;
                     mp.start();
                     updateMediaSessionMetadata();
                     updateMediaSessionState();
@@ -420,6 +535,7 @@ public class MusicPlaybackService extends MediaBrowserService {
             player.setOnErrorListener(new MediaPlayer.OnErrorListener() {
                 @Override public boolean onError(MediaPlayer mp, int what, int extra) {
                     preparing = false;
+                    rememberPlaybackFailure(currentSong);
                     advance(false);
                     return true;
                 }
@@ -427,9 +543,11 @@ public class MusicPlaybackService extends MediaBrowserService {
             player.prepareAsync();
         } catch (Exception e) {
             preparing = false;
+            rememberPlaybackFailure(currentSong);
             releasePlayer();
             updateMediaSessionState();
             updateNotificationOnly();
+            advance(false);
         }
     }
 
@@ -480,33 +598,30 @@ public class MusicPlaybackService extends MediaBrowserService {
         PendingIntent contentIntent = PendingIntent.getActivity(this, 0, activityIntent, pendingFlags());
 
         boolean playing = isPlaying();
-        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, CHANNEL_ID)
-                : new Notification.Builder(this);
-
-        builder.setSmallIcon(getApplicationInfo().icon)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(getApplicationInfo().icon)
                 .setContentTitle(currentSong == null ? "SimplePlayer" : currentSong.title)
                 .setContentText(currentSong == null ? "Ready" : currentSong.artist + " • " + currentSong.album)
                 .setSubText(shuffleEnabled ? (adaptiveShuffleEnabled ? "Adaptive shuffle" : "Seeded shuffle") : "Queue")
                 .setContentIntent(contentIntent)
                 .setShowWhen(false)
                 .setOngoing(playing)
-                .setColor(accent);
+                .setColor(accent)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .addAction(new NotificationCompat.Action(android.R.drawable.ic_media_previous, "Previous", serviceAction(ACTION_PREVIOUS)))
+                .addAction(new NotificationCompat.Action(playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
+                        playing ? "Pause" : "Play", serviceAction(ACTION_TOGGLE)))
+                .addAction(new NotificationCompat.Action(android.R.drawable.ic_media_next, "Next", serviceAction(ACTION_NEXT)));
 
         Bitmap art = loadAlbumArtBitmap(currentSong);
         if (art != null) builder.setLargeIcon(art);
-        if (Build.VERSION.SDK_INT >= 21) {
-            builder.setVisibility(Notification.VISIBILITY_PUBLIC);
-            builder.addAction(android.R.drawable.ic_media_previous, "Previous", serviceAction(ACTION_PREVIOUS));
-            builder.addAction(playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
-                    playing ? "Pause" : "Play", serviceAction(ACTION_TOGGLE));
-            builder.addAction(android.R.drawable.ic_media_next, "Next", serviceAction(ACTION_NEXT));
-            Notification.MediaStyle style = new Notification.MediaStyle()
-                    .setShowActionsInCompactView(0, 1, 2);
-            if (mediaSession != null) style.setMediaSession(mediaSession.getSessionToken());
-            builder.setStyle(style);
-            builder.setCategory(Notification.CATEGORY_TRANSPORT);
-        }
+
+        androidx.media.app.NotificationCompat.MediaStyle style = new androidx.media.app.NotificationCompat.MediaStyle()
+                .setShowActionsInCompactView(0, 1, 2);
+        if (mediaSession != null) style.setMediaSession(mediaSession.getSessionToken());
+        builder.setStyle(style);
         return builder.build();
     }
 
@@ -538,30 +653,30 @@ public class MusicPlaybackService extends MediaBrowserService {
     }
 
     private void updateMediaSessionMetadata() {
-        if (Build.VERSION.SDK_INT < 21 || mediaSession == null || currentSong == null) return;
-        MediaMetadata.Builder builder = new MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, currentSong.title)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, currentSong.artist)
-                .putString(MediaMetadata.METADATA_KEY_ALBUM, currentSong.album)
-                .putLong(MediaMetadata.METADATA_KEY_DURATION, Math.max(0, getDuration()));
+        if (mediaSession == null || currentSong == null) return;
+        MediaMetadataCompat.Builder builder = new MediaMetadataCompat.Builder()
+                .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentSong.title)
+                .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentSong.artist)
+                .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentSong.album)
+                .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, Math.max(0, getDuration()));
         Bitmap art = loadAlbumArtBitmap(currentSong);
-        if (art != null) builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+        if (art != null) builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art);
         mediaSession.setMetadata(builder.build());
     }
 
     private void updateMediaSessionState() {
-        if (Build.VERSION.SDK_INT < 21 || mediaSession == null) return;
-        long actions = PlaybackState.ACTION_PLAY
-                | PlaybackState.ACTION_PAUSE
-                | PlaybackState.ACTION_PLAY_PAUSE
-                | PlaybackState.ACTION_SKIP_TO_NEXT
-                | PlaybackState.ACTION_SKIP_TO_PREVIOUS
-                | PlaybackState.ACTION_SEEK_TO
-                | PlaybackState.ACTION_PLAY_FROM_MEDIA_ID
-                | PlaybackState.ACTION_PLAY_FROM_SEARCH;
-        int state = isPlaying() ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED;
-        if (preparing) state = PlaybackState.STATE_BUFFERING;
-        mediaSession.setPlaybackState(new PlaybackState.Builder()
+        if (mediaSession == null) return;
+        long actions = PlaybackStateCompat.ACTION_PLAY
+                | PlaybackStateCompat.ACTION_PAUSE
+                | PlaybackStateCompat.ACTION_PLAY_PAUSE
+                | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+                | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+                | PlaybackStateCompat.ACTION_SEEK_TO
+                | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
+                | PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH;
+        int state = isPlaying() ? PlaybackStateCompat.STATE_PLAYING : PlaybackStateCompat.STATE_PAUSED;
+        if (preparing) state = PlaybackStateCompat.STATE_BUFFERING;
+        mediaSession.setPlaybackState(new PlaybackStateCompat.Builder()
                 .setActions(actions)
                 .setState(state, getPosition(), isPlaying() ? 1.0f : 0.0f)
                 .build());
@@ -599,8 +714,8 @@ public class MusicPlaybackService extends MediaBrowserService {
         LibraryCache.save(this, sourceKey, library);
     }
 
-    private List<MediaBrowser.MediaItem> autoChildrenFor(String parentId) {
-        ArrayList<MediaBrowser.MediaItem> items = new ArrayList<>();
+    private List<MediaBrowserCompat.MediaItem> autoChildrenFor(String parentId) {
+        ArrayList<MediaBrowserCompat.MediaItem> items = new ArrayList<>();
         if (parentId == null || parentId.length() == 0 || AUTO_ROOT.equals(parentId)) {
             items.add(browsableItem(AUTO_SONGS, "Songs", library.size() + " songs"));
             items.add(browsableItem(AUTO_ALBUMS, "Albums", albumBuckets().size() + " albums"));
@@ -667,31 +782,38 @@ public class MusicPlaybackService extends MediaBrowserService {
         return items;
     }
 
-    private void addPlayableSongs(ArrayList<MediaBrowser.MediaItem> items, String containerId, List<Song> songs) {
+    private void addPlayableSongs(ArrayList<MediaBrowserCompat.MediaItem> items, String containerId, List<Song> songs) {
         if (songs == null) return;
         for (Song song : songs) {
             items.add(playableSongItem(containerId, song));
         }
     }
 
-    private MediaBrowser.MediaItem browsableItem(String mediaId, String title, String subtitle) {
-        MediaDescription description = new MediaDescription.Builder()
+    private MediaBrowserCompat.MediaItem browsableItem(String mediaId, String title, String subtitle) {
+        Bundle extras = new Bundle();
+        extras.putInt(AUTO_CONTENT_STYLE_BROWSABLE, AUTO_CONTENT_STYLE_GRID);
+        extras.putInt(AUTO_CONTENT_STYLE_PLAYABLE, AUTO_CONTENT_STYLE_LIST);
+        MediaDescriptionCompat description = new MediaDescriptionCompat.Builder()
                 .setMediaId(mediaId)
                 .setTitle(title == null ? "" : title)
                 .setSubtitle(subtitle == null ? "" : subtitle)
+                .setExtras(extras)
                 .build();
-        return new MediaBrowser.MediaItem(description, MediaBrowser.MediaItem.FLAG_BROWSABLE);
+        return new MediaBrowserCompat.MediaItem(description, MediaBrowserCompat.MediaItem.FLAG_BROWSABLE);
     }
 
-    private MediaBrowser.MediaItem playableSongItem(String containerId, Song song) {
-        MediaDescription.Builder builder = new MediaDescription.Builder()
+    private MediaBrowserCompat.MediaItem playableSongItem(String containerId, Song song) {
+        Bundle extras = new Bundle();
+        extras.putInt(AUTO_CONTENT_STYLE_PLAYABLE, AUTO_CONTENT_STYLE_LIST);
+        MediaDescriptionCompat.Builder builder = new MediaDescriptionCompat.Builder()
                 .setMediaId(songMediaId(containerId, song))
                 .setTitle(song.title)
-                .setSubtitle(song.artist + " • " + song.album);
+                .setSubtitle(song.artist + " • " + song.album)
+                .setExtras(extras);
         if (song.albumArtUri != null && song.albumArtUri.length() > 0) {
             try { builder.setIconUri(Uri.parse(song.albumArtUri)); } catch (Exception ignored) {}
         }
-        return new MediaBrowser.MediaItem(builder.build(), MediaBrowser.MediaItem.FLAG_PLAYABLE);
+        return new MediaBrowserCompat.MediaItem(builder.build(), MediaBrowserCompat.MediaItem.FLAG_PLAYABLE);
     }
 
     private void playFromAutoMediaId(String mediaId) {
@@ -828,7 +950,7 @@ public class MusicPlaybackService extends MediaBrowserService {
 
     @Override public void onDestroy() {
         releasePlayer();
-        if (Build.VERSION.SDK_INT >= 21 && mediaSession != null) {
+        if (mediaSession != null) {
             mediaSession.setActive(false);
             mediaSession.release();
             mediaSession = null;
