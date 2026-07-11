@@ -11,6 +11,7 @@ import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
+import android.media.audiofx.Equalizer;
 import android.net.Uri;
 import android.os.Binder;
 import android.os.Bundle;
@@ -34,17 +35,20 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 
 public class MusicPlaybackService extends MediaBrowserServiceCompat {
     private static final int NOTIFICATION_ID = 2701;
     private static final String CHANNEL_ID = "playback";
-    private static final String ACTION_TOGGLE = "com.zoeykl.simpleplayer.TOGGLE";
-    private static final String ACTION_PLAY = "com.zoeykl.simpleplayer.PLAY";
-    private static final String ACTION_PAUSE = "com.zoeykl.simpleplayer.PAUSE";
-    private static final String ACTION_NEXT = "com.zoeykl.simpleplayer.NEXT";
-    private static final String ACTION_PREVIOUS = "com.zoeykl.simpleplayer.PREVIOUS";
+    public static final String ACTION_TOGGLE = "com.zoeykl.simpleplayer.TOGGLE";
+    public static final String ACTION_PLAY = "com.zoeykl.simpleplayer.PLAY";
+    public static final String ACTION_PAUSE = "com.zoeykl.simpleplayer.PAUSE";
+    public static final String ACTION_NEXT = "com.zoeykl.simpleplayer.NEXT";
+    public static final String ACTION_PREVIOUS = "com.zoeykl.simpleplayer.PREVIOUS";
+    public static final String ACTION_PLAY_STABLE_KEY = "com.zoeykl.simpleplayer.PLAY_STABLE_KEY";
+    public static final String EXTRA_STABLE_KEY = "stable_key";
 
     private static final String PREFS = "prefs";
     private static final String KEY_MUSIC_FOLDER = "music_folder";
@@ -85,6 +89,16 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         public long shuffleSeed;
     }
 
+    public static class EqualizerState {
+        public boolean enabled;
+        public boolean available;
+        public String status;
+        public short[] levels;
+        public short minLevel;
+        public short maxLevel;
+        public int actualBandCount;
+    }
+
     private final IBinder binder = new LocalBinder();
     private final ArrayList<Song> library = new ArrayList<>();
     private final ArrayList<Song> queue = new ArrayList<>();
@@ -105,9 +119,17 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
     private boolean sessionTokenSet = false;
     private int accent = 0xFFE53935;
     private int consecutivePlaybackFailures = 0;
+    private Equalizer equalizer;
+    private boolean eqEnabled = false;
+    private short[] eqLevels = EqSettings.flatLevels();
+    private short eqMinLevel = EqSettings.DEFAULT_MIN_MB;
+    private short eqMaxLevel = EqSettings.DEFAULT_MAX_MB;
+    private int eqActualBands = 0;
+    private String eqStatus = "EQ will attach when playback starts.";
 
     @Override public void onCreate() {
         super.onCreate();
+        loadEqualizerSettings();
         createChannelIfNeeded();
         setupMediaSession();
     }
@@ -136,7 +158,11 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         if (intent != null && Intent.ACTION_MEDIA_BUTTON.equals(intent.getAction()) && mediaSession != null) {
             MediaButtonReceiver.handleIntent(mediaSession, intent);
         } else if (intent != null && intent.getAction() != null) {
-            handleAction(intent.getAction());
+            if (ACTION_PLAY_STABLE_KEY.equals(intent.getAction())) {
+                playSongByStableKey(intent.getStringExtra(EXTRA_STABLE_KEY));
+            } else {
+                handleAction(intent.getAction());
+            }
         }
         return START_STICKY;
     }
@@ -401,6 +427,42 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         return state;
     }
 
+    public EqualizerState getEqualizerState() {
+        EqualizerState state = new EqualizerState();
+        state.enabled = eqEnabled;
+        state.available = equalizer != null;
+        state.status = eqStatus == null ? "" : eqStatus;
+        state.levels = eqLevels == null ? EqSettings.flatLevels() : eqLevels.clone();
+        state.minLevel = eqMinLevel;
+        state.maxLevel = eqMaxLevel;
+        state.actualBandCount = eqActualBands;
+        return state;
+    }
+
+    public void setEqualizerEnabled(boolean enabled) {
+        eqEnabled = enabled;
+        EqSettings.saveEnabled(this, enabled);
+        applyEqualizerLevels();
+    }
+
+    public void setEqualizerBandLevel(int logicalBand, int millibels) {
+        if (logicalBand < 0 || logicalBand >= EqSettings.BAND_COUNT) return;
+        eqLevels[logicalBand] = EqSettings.clampInt(millibels, eqMinLevel, eqMaxLevel);
+        EqSettings.saveLevels(this, eqLevels);
+        applyEqualizerLevels();
+    }
+
+    public void resetEqualizer() {
+        eqLevels = EqSettings.flatLevels();
+        EqSettings.saveLevels(this, eqLevels);
+        applyEqualizerLevels();
+    }
+
+    private void loadEqualizerSettings() {
+        eqEnabled = EqSettings.loadEnabled(this);
+        eqLevels = EqSettings.loadLevels(this);
+    }
+
     private ArrayList<Song> makeShuffleQueue(List<Song> base, Song first) {
         return makeShuffleQueue(base, first, true);
     }
@@ -512,6 +574,7 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             } else {
                 player.setAudioStreamType(AudioManager.STREAM_MUSIC);
             }
+            attachEqualizerToCurrentPlayer();
             if (currentSong.contentUri.startsWith("file:") || currentSong.contentUri.length() == 0) {
                 player.setDataSource(currentSong.absolutePath);
             } else {
@@ -572,7 +635,92 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
         return -1;
     }
 
+    private void attachEqualizerToCurrentPlayer() {
+        releaseEqualizer();
+        if (player == null) return;
+        try {
+            equalizer = new Equalizer(0, player.getAudioSessionId());
+            eqActualBands = Math.max(0, equalizer.getNumberOfBands());
+            short[] range = equalizer.getBandLevelRange();
+            if (range != null && range.length >= 2) {
+                eqMinLevel = range[0];
+                eqMaxLevel = range[1];
+            } else {
+                eqMinLevel = EqSettings.DEFAULT_MIN_MB;
+                eqMaxLevel = EqSettings.DEFAULT_MAX_MB;
+            }
+            eqStatus = "15-band control mapped to " + eqActualBands + " Android EQ bands.";
+            applyEqualizerLevels();
+        } catch (Throwable t) {
+            equalizer = null;
+            eqActualBands = 0;
+            eqMinLevel = EqSettings.DEFAULT_MIN_MB;
+            eqMaxLevel = EqSettings.DEFAULT_MAX_MB;
+            eqStatus = "EQ unavailable on this audio session: " + safeMessage(t);
+        }
+    }
+
+    private void releaseEqualizer() {
+        if (equalizer != null) {
+            try { equalizer.setEnabled(false); } catch (Exception ignored) {}
+            try { equalizer.release(); } catch (Exception ignored) {}
+            equalizer = null;
+        }
+        eqActualBands = 0;
+    }
+
+    private void applyEqualizerLevels() {
+        if (equalizer == null) {
+            eqStatus = "EQ will attach when playback starts.";
+            return;
+        }
+        try {
+            equalizer.setEnabled(eqEnabled);
+            if (!eqEnabled) {
+                eqStatus = "EQ off. The tiny mixing desk is asleep.";
+                return;
+            }
+            short bands = equalizer.getNumberOfBands();
+            eqActualBands = bands;
+            for (short band = 0; band < bands; band++) {
+                int centerHz = 1000;
+                try { centerHz = Math.max(1, equalizer.getCenterFreq(band) / 1000); } catch (Exception ignored) {}
+                short mapped = EqSettings.clamp(interpolatedLogicalLevel(centerHz), eqMinLevel, eqMaxLevel);
+                try { equalizer.setBandLevel(band, mapped); } catch (Exception ignored) {}
+            }
+            eqStatus = "15-band control mapped to " + eqActualBands + " Android EQ bands.";
+        } catch (Throwable t) {
+            eqStatus = "EQ apply failed: " + safeMessage(t);
+        }
+    }
+
+    private short interpolatedLogicalLevel(int centerHz) {
+        if (eqLevels == null || eqLevels.length == 0) return 0;
+        int[] freqs = EqSettings.FREQUENCIES_HZ;
+        if (centerHz <= freqs[0]) return eqLevels[0];
+        if (centerHz >= freqs[freqs.length - 1]) return eqLevels[EqSettings.BAND_COUNT - 1];
+        double target = Math.log(centerHz);
+        for (int i = 0; i < freqs.length - 1; i++) {
+            if (centerHz >= freqs[i] && centerHz <= freqs[i + 1]) {
+                double lo = Math.log(freqs[i]);
+                double hi = Math.log(freqs[i + 1]);
+                double t = hi == lo ? 0.0 : (target - lo) / (hi - lo);
+                double value = eqLevels[i] + (eqLevels[i + 1] - eqLevels[i]) * t;
+                return EqSettings.clampInt((int) Math.round(value), eqMinLevel, eqMaxLevel);
+            }
+        }
+        return 0;
+    }
+
+    private String safeMessage(Throwable t) {
+        if (t == null) return "unknown Android audio sulk";
+        String message = t.getMessage();
+        if (message == null || message.trim().length() == 0) return t.getClass().getSimpleName();
+        return String.format(Locale.US, "%s: %s", t.getClass().getSimpleName(), message);
+    }
+
     private void releasePlayer() {
+        releaseEqualizer();
         if (player != null) {
             try { player.stop(); } catch (Exception ignored) {}
             try { player.release(); } catch (Exception ignored) {}
@@ -814,6 +962,13 @@ public class MusicPlaybackService extends MediaBrowserServiceCompat {
             try { builder.setIconUri(Uri.parse(song.albumArtUri)); } catch (Exception ignored) {}
         }
         return new MediaBrowserCompat.MediaItem(builder.build(), MediaBrowserCompat.MediaItem.FLAG_PLAYABLE);
+    }
+
+    private void playSongByStableKey(String stableKey) {
+        ensureAutoLibraryLoaded();
+        Song match = findSongByStableKey(library, stableKey);
+        if (match == null) return;
+        playSong(match, new ArrayList<>(library));
     }
 
     private void playFromAutoMediaId(String mediaId) {

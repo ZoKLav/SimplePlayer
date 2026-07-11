@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
     private static final String KEY_MUSIC_TREE_URI = "music_tree_uri";
     private static final String KEY_SHUFFLE_SEED = "shuffle_seed";
     private static final String KEY_ADAPTIVE_SHUFFLE = "adaptive_shuffle";
+    private static final String KEY_VISUALIZER_FALLBACK = "visualizer_fallback";
     private static final String KEY_SONG_SORT = "song_sort";
     private static final String KEY_SONG_SORT_ASC = "song_sort_asc";
     private static final String SORT_NAME = "name";
@@ -83,6 +84,7 @@ public class MainActivity extends Activity {
     private String musicTreeUri = "";
     private long shuffleSeed = 0x5eed51a7L;
     private boolean adaptiveShuffle = false;
+    private boolean visualizerFallback = true;
     private String songSort = SORT_NAME;
     private boolean songSortAscending = true;
     private String currentTab = "Songs";
@@ -96,6 +98,7 @@ public class MainActivity extends Activity {
     private Button playerPlayButton;
     private Button playerShuffleButton;
     private Button nowPlayingPlayButton;
+    private AlbumFallbackVisualizerView playerVisualizer;
     private boolean userSeeking = false;
     private boolean libraryScanRunning = false;
     private String lastRenderedSongKey = "";
@@ -137,6 +140,7 @@ public class MainActivity extends Activity {
         musicTreeUri = prefs.getString(KEY_MUSIC_TREE_URI, "");
         shuffleSeed = prefs.getLong(KEY_SHUFFLE_SEED, shuffleSeed);
         adaptiveShuffle = prefs.getBoolean(KEY_ADAPTIVE_SHUFFLE, false);
+        visualizerFallback = prefs.getBoolean(KEY_VISUALIZER_FALLBACK, true);
         songSort = cleanSongSort(prefs.getString(KEY_SONG_SORT, SORT_NAME));
         songSortAscending = prefs.getBoolean(KEY_SONG_SORT_ASC, true);
         boolean cacheLoaded = loadLibraryCache();
@@ -401,7 +405,7 @@ public class MainActivity extends Activity {
         tabs.setPadding(dp(10), dp(8), dp(10), dp(10));
         scroller.addView(tabs, new HorizontalScrollView.LayoutParams(-2, -2));
 
-        String[] labels = new String[]{"Songs", "Albums", "Artists", "Playlists", "Player", "Settings"};
+        String[] labels = new String[]{"Songs", "Albums", "Artists", "Playlists", "Player", "EQ", "Settings"};
         for (final String label : labels) {
             TextView tab = pill(label, label.equals(currentTab));
             tab.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
@@ -421,6 +425,7 @@ public class MainActivity extends Activity {
         else if ("Albums".equals(currentTab)) showAlbums();
         else if ("Artists".equals(currentTab)) showArtists();
         else if ("Playlists".equals(currentTab)) showPlaylists();
+        else if ("EQ".equals(currentTab)) showEqualizer();
         else if ("Settings".equals(currentTab)) showSettings();
         else showPlayer();
     }
@@ -575,13 +580,23 @@ public class MainActivity extends Activity {
         artCardLp.setMargins(0, 0, landscape ? dp(18) : 0, landscape ? 0 : dp(16));
         outer.addView(artCard, artCardLp);
 
-        ImageView art = new ImageView(this);
-        art.setBackground(makeAlbumPlaceholder());
-        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
         if (song != null && song.albumArtUri.length() > 0) {
+            ImageView art = new ImageView(this);
+            art.setBackground(makeAlbumPlaceholder());
+            art.setScaleType(ImageView.ScaleType.CENTER_CROP);
             try { art.setImageURI(Uri.parse(song.albumArtUri)); } catch (Exception ignored) {}
+            artCard.addView(art, new LinearLayout.LayoutParams(-1, 0, 1));
+        } else if (song != null && visualizerFallback) {
+            playerVisualizer = new AlbumFallbackVisualizerView(this);
+            playerVisualizer.setAccent(accent);
+            playerVisualizer.setPlaybackState(state != null && state.playing, state == null ? 0 : state.positionMs, song.stableKey());
+            artCard.addView(playerVisualizer, new LinearLayout.LayoutParams(-1, 0, 1));
+        } else {
+            ImageView art = new ImageView(this);
+            art.setBackground(makeAlbumPlaceholder());
+            art.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            artCard.addView(art, new LinearLayout.LayoutParams(-1, 0, 1));
         }
-        artCard.addView(art, new LinearLayout.LayoutParams(-1, 0, 1));
 
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
@@ -676,6 +691,98 @@ public class MainActivity extends Activity {
             seedInfo.setPadding(0, dp(3), 0, 0);
             controls.addView(seedInfo, new LinearLayout.LayoutParams(-1, -2));
         }
+    }
+
+    private void showEqualizer() {
+        LinearLayout list = listContainer();
+        MusicPlaybackService.EqualizerState state = service == null ? null : service.getEqualizerState();
+        boolean enabled = state == null ? EqSettings.loadEnabled(this) : state.enabled;
+        final short[] levels = state == null || state.levels == null ? EqSettings.loadLevels(this) : state.levels.clone();
+        final short min = state == null ? EqSettings.DEFAULT_MIN_MB : state.minLevel;
+        final short max = state == null ? EqSettings.DEFAULT_MAX_MB : state.maxLevel;
+        String status = state == null ? "EQ service not bound yet." : state.status;
+        int actualBands = state == null ? 0 : state.actualBandCount;
+
+        list.addView(sectionTitle("15-band EQ"));
+        TextView help = text("These are 15 logical EQ bands. Android's built-in EQ exposes however many hardware bands the device/player session supports, so SimplePlayer maps these sliders into that available engine. In other words: 15 knobs, Android still gets to be Android about it.", 13, Color.LTGRAY, false);
+        help.setPadding(dp(8), 0, dp(8), dp(8));
+        list.addView(help);
+
+        String actual = actualBands > 0 ? "Attached Android EQ bands: " + actualBands : "Attached Android EQ bands: waiting for playback";
+        TextView statusView = statusChip(actual + "\n" + status);
+        LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(-1, -2);
+        statusLp.setMargins(0, 0, 0, dp(10));
+        list.addView(statusView, statusLp);
+
+        Button toggle = filledButton(enabled ? "EQ: On" : "EQ: Off");
+        toggle.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            boolean next = !(service != null ? service.getEqualizerState().enabled : EqSettings.loadEnabled(MainActivity.this));
+            EqSettings.saveEnabled(MainActivity.this, next);
+            if (service != null) service.setEqualizerEnabled(next);
+            toast(next ? "EQ on" : "EQ off");
+            render();
+        }});
+        addButtonBlock(list, toggle);
+
+        Button reset = button("Reset EQ bands to flat");
+        reset.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            EqSettings.reset(MainActivity.this);
+            if (service != null) service.resetEqualizer();
+            toast("EQ reset");
+            render();
+        }});
+        addButtonBlock(list, reset);
+
+        list.addView(sectionTitle("Bands"));
+        for (int i = 0; i < EqSettings.BAND_COUNT; i++) {
+            list.addView(eqBandRow(i, levels, min, max));
+        }
+
+        content.addView(scroll(list));
+    }
+
+    private View eqBandRow(final int index, final short[] levels, final short min, final short max) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(14), dp(10), dp(14), dp(12));
+        box.setBackground(makeGradientRect(SURFACE_RAISED, SURFACE_DARK, 0, STROKE_SOFT, 1));
+        LinearLayout.LayoutParams outerLp = new LinearLayout.LayoutParams(-1, -2);
+        outerLp.setMargins(0, 0, 0, dp(9));
+        box.setLayoutParams(outerLp);
+
+        LinearLayout labelRow = new LinearLayout(this);
+        labelRow.setOrientation(LinearLayout.HORIZONTAL);
+        labelRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = text(EqSettings.bandLabel(index), 15, Color.WHITE, true);
+        final TextView value = text(EqSettings.dbLabel(levels[index]), 13, TEXT_MUTED, false);
+        value.setGravity(Gravity.RIGHT);
+        labelRow.addView(name, new LinearLayout.LayoutParams(0, -2, 1));
+        labelRow.addView(value, new LinearLayout.LayoutParams(0, -2, 1));
+        box.addView(labelRow, new LinearLayout.LayoutParams(-1, -2));
+
+        final SeekBar slider = new SeekBar(this);
+        int range = Math.max(1, max - min);
+        slider.setMax(range);
+        slider.setProgress(Math.max(0, Math.min(range, levels[index] - min)));
+        if (Build.VERSION.SDK_INT >= 21) {
+            slider.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
+            slider.setThumbTintList(android.content.res.ColorStateList.valueOf(accent));
+            slider.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(STROKE));
+        }
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                short level = EqSettings.clampInt(min + progress, min, max);
+                value.setText(EqSettings.dbLabel(level));
+                if (!fromUser) return;
+                levels[index] = level;
+                EqSettings.saveLevels(MainActivity.this, levels);
+                if (service != null) service.setEqualizerBandLevel(index, level);
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+        box.addView(slider, new LinearLayout.LayoutParams(-1, -2));
+        return box;
     }
 
     private void showSettings() {
@@ -787,6 +894,20 @@ public class MainActivity extends Activity {
         }});
         addButtonBlock(list, applyAccent);
 
+        list.addView(sectionTitle("Artwork fallback"));
+        TextView visualizerHelp = text("When a track has no embedded art and no folder art, SimplePlayer can show a lightweight animated visualization instead of the plain placeholder. It is decorative and local to the player UI, because asking Android for full audio capture permissions just to make bars wiggle is how apps become rude.", 13, Color.LTGRAY, false);
+        visualizerHelp.setPadding(dp(8), 0, dp(8), dp(8));
+        list.addView(visualizerHelp);
+
+        Button visualizerToggle = button(visualizerFallback ? "Missing-art visualization: On" : "Missing-art visualization: Off");
+        visualizerToggle.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View v) {
+            visualizerFallback = !visualizerFallback;
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_VISUALIZER_FALLBACK, visualizerFallback).apply();
+            toast(visualizerFallback ? "Missing-art visualization on" : "Missing-art visualization off");
+            render();
+        }});
+        addButtonBlock(list, visualizerToggle);
+
         list.addView(sectionTitle("Shuffle"));
         TextView shuffleHelp = text("Normal seeded shuffle uses the seed below to generate a stable no-repeat queue, then nudges the order to reduce artist/album clumps. Adaptive shuffle is optional: it still uses the seed, but songs skipped before 15 seconds are pushed later in future shuffled bags.", 13, Color.LTGRAY, false);
         shuffleHelp.setPadding(dp(8), 0, dp(8), dp(8));
@@ -866,6 +987,11 @@ public class MainActivity extends Activity {
             String mode = state.adaptiveShuffle ? "Adaptive" : "Seeded";
             seedInfoLabel.setText(mode + " shuffle • Seed: " + state.shuffleSeed);
         }
+        if (playerVisualizer != null && state.song != null) {
+            playerVisualizer.setAccent(accent);
+            playerVisualizer.setPlaybackState(state.playing, state.positionMs, state.song.stableKey());
+            playerVisualizer.invalidate();
+        }
         rememberPlaybackSnapshot(state);
     }
 
@@ -911,6 +1037,7 @@ public class MainActivity extends Activity {
         playerPlayButton = null;
         playerShuffleButton = null;
         nowPlayingPlayButton = null;
+        playerVisualizer = null;
         userSeeking = false;
     }
 
