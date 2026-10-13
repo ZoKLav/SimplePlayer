@@ -338,18 +338,6 @@ Folder picker access
 
 These are used for local playback, notifications, and folder scanning.
 
-## Building
-
-This project uses a local Gradle downloader setup, so Gradle does not need to be installed globally.
-
-On Windows:
-
-```bat
-build.bat
-```
-
-The debug APK will be generated under the app build outputs folder.
-
 ## Known Limitations
 
 Some WAV files have poor or nonexistent metadata.
